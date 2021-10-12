@@ -21,6 +21,27 @@ use tonic::Code;
 
 const FIRESTORE_API_DOMAIN: &str = "firestore.googleapis.com";
 
+#[derive(Clone, Hash, Debug, PartialEq, Eq)]
+pub struct QualifiedDocumentName {
+    name: String
+}
+
+pub trait QualifyDocumentName {
+    fn qualify(&self, path: &str) -> QualifiedDocumentName;
+}
+
+impl QualifyDocumentName for &str {
+    fn qualify(&self, path: &str) -> QualifiedDocumentName{
+        QualifiedDocumentName {name: format!("{}/{}", path, self)}
+    }
+}
+
+impl QualifyDocumentName for &QualifiedDocumentName {
+    fn qualify(&self, _path: &str) -> QualifiedDocumentName {
+        (*self).clone()
+    }
+}
+
 pub struct Collection<T, K>
 where
     T: Serialize + DeserializeOwned + 'static,
@@ -32,12 +53,13 @@ where
     db: Arc<Mutex<FirestoreClient<K>>>,
     collection_id: String,
     parent: String,
+    path: String,
     _ph: PhantomData<T>,
 }
 
 #[derive(Hash, PartialEq, Debug, Eq)]
 pub struct ObjectWithMetadata<T> {
-    pub name: String,
+    pub name: QualifiedDocumentName,
     pub value: T,
 }
 
@@ -129,7 +151,7 @@ where
 
         loop {
             if let Some(doc) = self_mut.items.pop_front() {
-                let name = doc.name.clone();
+                let name = QualifiedDocumentName {name: doc.name.clone()};
                 let value =
                     firestore_serde::from_document(doc).expect("Could not convert document.");
 
@@ -177,26 +199,16 @@ where
     <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     pub fn new(db: Arc<Mutex<FirestoreClient<K>>>, collection_id: &str, project_id: &str) -> Self {
+        let parent = format!("projects/{}/databases/(default)/documents", project_id);
+        let path = format!("{}/{}", parent, collection_id);
+
         Collection {
             db,
             collection_id: collection_id.to_string(),
-            parent: format!("projects/{}/databases/(default)/documents", project_id),
+            path,
+            parent,
             _ph: PhantomData::default(),
         }
-    }
-
-    pub fn path(&self) -> String {
-        format!("{}/{}", self.parent, self.collection_id)
-    }
-
-    pub fn get_name(&self, key: &str) -> String {
-        if key.contains('/') {
-            // Only qualify key if it is not already qualified.
-            // TODO: this feels bad.
-            key.to_string()
-        } else {
-            format!("{}/{}", self.path(), key)
-        }        
     }
 
     pub fn list(&self) -> ListResponse<T, K> {
@@ -210,9 +222,10 @@ where
     /// Create the given document in this collection with the given key.
     /// Returns an error if the key is already in use (if you intend to replace the
     /// document in that case, use `upsert` instead.)
-    pub async fn create_with_key(&self, ob: &T, key: &str) -> anyhow::Result<()> {
+    pub async fn create_with_key(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = self.get_name(key);
+        
+        document.name = key.qualify(&self.path).name;
         self.db
             .lock()
             .await
@@ -229,9 +242,9 @@ where
 
     /// Create the given document in this collection with the given key.
     /// Returns `true` if the document was created, or `false` if it already existed.
-    pub async fn try_create(&self, ob: &T, key: &str) -> anyhow::Result<bool> {
+    pub async fn try_create(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<bool> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = self.get_name(key);
+        document.name = key.qualify(&self.path).name;
         let result = self
             .db
             .lock()
@@ -253,7 +266,7 @@ where
     }
 
     /// Add the given document to this collection, assigning it a new key at random.
-    pub async fn create(&self, ob: &T) -> anyhow::Result<String> {
+    pub async fn create(&self, ob: &T) -> anyhow::Result<QualifiedDocumentName> {
         let document = firestore_serde::to_document(ob)?;
         let result = self
             .db
@@ -267,12 +280,12 @@ where
             })
             .await?
             .into_inner();
-        Ok(result.name)
+        Ok(QualifiedDocumentName {name: result.name})
     }
 
-    pub async fn upsert(&self, ob: &T, key: &str) -> anyhow::Result<()> {
+    pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = self.get_name(key);
+        document.name = key.qualify(&self.path).name;
         self.db
             .lock()
             .await
@@ -284,9 +297,9 @@ where
         Ok(())
     }
 
-    pub async fn update(&self, ob: &T, key: &str) -> anyhow::Result<()> {
+    pub async fn update(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = self.get_name(key);
+        document.name = key.qualify(&self.path).name;
         self.db
             .lock()
             .await
@@ -301,13 +314,13 @@ where
         Ok(())
     }
 
-    pub async fn get(&self, key: &str) -> anyhow::Result<T> {
+    pub async fn get(&self, key: impl QualifyDocumentName) -> anyhow::Result<T> {
         let document = self
             .db
             .lock()
             .await
             .get_document(GetDocumentRequest {
-                name: self.get_name(key),
+                name: key.qualify(&self.path).name,
                 ..GetDocumentRequest::default()
             })
             .await?
@@ -317,8 +330,8 @@ where
             .map_err(|_| anyhow::anyhow!("Error deserializing."))
     }
 
-    pub async fn delete(&self, key: &str) -> anyhow::Result<()> {
-        let name = self.get_name(key);
+    pub async fn delete(&self, key: impl QualifyDocumentName) -> anyhow::Result<()> {
+        let name = key.qualify(&self.path).name;
         self.db
             .lock()
             .await
