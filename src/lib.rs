@@ -35,6 +35,7 @@ where
     _ph: PhantomData<T>,
 }
 
+#[derive(Hash, PartialEq, Debug, Eq)]
 pub struct ObjectWithMetadata<T> {
     pub name: String,
     pub value: T,
@@ -54,7 +55,7 @@ where
     items: VecDeque<Document>,
     depleated: bool,
     db: Arc<Mutex<FirestoreClient<K>>>,
-    future: Option<Pin<Box<dyn Future<Output = VecDeque<Document>> + 'static>>>,
+    future: Option<Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>>,
 
     _ph: PhantomData<T>,
 }
@@ -85,7 +86,7 @@ where
         collection_id: String,
         page_token: Option<String>,
         db: Arc<Mutex<FirestoreClient<K>>>,
-    ) -> VecDeque<Document> {
+    ) -> (VecDeque<Document>, String) {
         let parent = parent;
         let collection_id = collection_id;
 
@@ -101,7 +102,9 @@ where
             .await
             .unwrap();
 
-        documents.into_inner().documents.into_iter().collect()
+        let documents = documents.into_inner();
+        let page_token = documents.next_page_token;
+        (documents.documents.into_iter().collect(), page_token)
     }
 }
 
@@ -119,7 +122,7 @@ where
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        if self.depleated {
+        if self.depleated && self.items.is_empty() {
             return Poll::Ready(None);
         }
         let self_mut = self.get_mut();
@@ -136,8 +139,17 @@ where
             if let Some(fut) = &mut self_mut.future {
                 return match fut.as_mut().poll(cx) {
                     Poll::Pending => Poll::Pending,
-                    Poll::Ready(c) => {
-                        self_mut.items = c;
+                    Poll::Ready(result) => {
+                        let (items, page_token) = result;
+
+                        self_mut.page_token = if page_token == "" {
+                            self_mut.depleated = true;
+                            Some(page_token)
+                        } else {
+                            None
+                        };
+                        self_mut.items = items;
+                        self_mut.future = None;
                         continue;
                     }
                 };
@@ -151,7 +163,6 @@ where
             ));
 
             self_mut.future = Some(fut);
-            return Poll::Pending;
         }
     }
 }
@@ -179,7 +190,13 @@ where
     }
 
     pub fn get_name(&self, key: &str) -> String {
-        format!("{}/{}", self.path(), key)
+        if key.contains('/') {
+            // Only qualify key if it is not already qualified.
+            // TODO: this feels bad.
+            key.to_string()
+        } else {
+            format!("{}/{}", self.path(), key)
+        }        
     }
 
     pub fn list(&self) -> ListResponse<T, K> {
@@ -307,7 +324,9 @@ where
             .await
             .delete_document(DeleteDocumentRequest {
                 name,
-                ..DeleteDocumentRequest::default()
+                current_document: Some(Precondition {
+                    condition_type: Some(ConditionType::Exists(true))
+                })
             })
             .await?;
         Ok(())
