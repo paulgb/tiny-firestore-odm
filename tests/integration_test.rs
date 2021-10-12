@@ -1,7 +1,7 @@
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
+use std::{collections::HashSet, fs::read_to_string};
 use tiny_firestore_odm::{get_client, Collection, ObjectWithMetadata};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -38,22 +38,27 @@ where
     }
 }
 
-fn get_source_and_project(filename: &str) -> (TokenSource, String) {
-    let source: TokenSource = Credentials::from_file(filename, SCOPES).into();
-    let project: ProjectIdExtractor = serde_json::from_str(
-        &std::fs::read_to_string(filename).expect("Could not read credentials file"),
-    )
-    .expect("Could not parse credentials file");
+fn get_source_and_project() -> (TokenSource, String) {
+    let creds_json = if let Ok(creds) = std::env::var("GCP_SERVICE_ACCOUNT") {
+        creds
+    } else {
+        read_to_string("credentials.json")
+            .expect("No credentials.json and GCP_SERVICE_ACCOUNT not set.")
+    };
+
+    let source: TokenSource = Credentials::from_json(creds_json.as_bytes(), SCOPES).into();
+    let project: ProjectIdExtractor =
+        serde_json::from_str(&creds_json).expect("Could not parse credentials file");
 
     (source, project.project_id)
 }
 
 #[tokio::test]
 async fn do_test() {
-    let (source, project_id) = get_source_and_project("credentials.json");
+    let (source, project_id) = get_source_and_project();
     let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
     let users: Collection<User, _> = Collection::new(client, "users", &project_id);
-    
+
     // Delete existing documents to create fresh start.
     empty_collection(&users).await;
 
@@ -79,17 +84,17 @@ async fn do_test() {
     // Fetch users and check that results match expectations.
     let users_list: Vec<ObjectWithMetadata<User>> = users.list().collect().await;
     let users_list: HashSet<ObjectWithMetadata<User>> = users_list.into_iter().collect();
-    
+
     let mut expected: HashSet<ObjectWithMetadata<User>> = HashSet::new();
-    
+
     expected.insert(ObjectWithMetadata {
         name: u1_key.clone(),
-        value: u1.clone()
+        value: u1.clone(),
     });
 
     expected.insert(ObjectWithMetadata {
         name: u2_key,
-        value: u2
+        value: u2,
     });
 
     assert_eq!(expected, users_list);
