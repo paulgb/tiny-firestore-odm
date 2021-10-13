@@ -8,6 +8,7 @@ use firestore_serde::firestore::{Document, ListDocumentsRequest};
 use googapis::CERTIFICATES;
 use google_authz::{AddAuthorization, Credentials, TokenSource};
 use hyper::Uri;
+use qualified_document_name::{QualifiedDocumentName, QualifyDocumentName};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -19,31 +20,9 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Code;
 
 mod dynamic_firestore_client;
+mod qualified_document_name;
 
 const FIRESTORE_API_DOMAIN: &str = "firestore.googleapis.com";
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
-pub struct QualifiedDocumentName {
-    name: String,
-}
-
-pub trait QualifyDocumentName {
-    fn qualify(&self, path: &str) -> QualifiedDocumentName;
-}
-
-impl QualifyDocumentName for &str {
-    fn qualify(&self, path: &str) -> QualifiedDocumentName {
-        QualifiedDocumentName {
-            name: format!("{}/{}", path, self),
-        }
-    }
-}
-
-impl QualifyDocumentName for &QualifiedDocumentName {
-    fn qualify(&self, _path: &str) -> QualifiedDocumentName {
-        (*self).clone()
-    }
-}
 
 pub struct Collection<T>
 where
@@ -138,9 +117,7 @@ where
 
         loop {
             if let Some(doc) = self_mut.items.pop_front() {
-                let name = QualifiedDocumentName {
-                    name: doc.name.clone(),
-                };
+                let name = todo!();
                 let value =
                     firestore_serde::from_document(doc).expect("Could not convert document.");
 
@@ -214,7 +191,7 @@ where
     ) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
 
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.path).name();
         self.db
             .lock()
             .await
@@ -233,7 +210,7 @@ where
     /// Returns `true` if the document was created, or `false` if it already existed.
     pub async fn try_create(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<bool> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.path).name();
         let result = self
             .db
             .lock()
@@ -269,12 +246,12 @@ where
             })
             .await?
             .into_inner();
-        Ok(QualifiedDocumentName { name: result.name })
+        Ok(todo!())
     }
 
     pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.path).name();
         self.db
             .lock()
             .await
@@ -288,7 +265,7 @@ where
 
     pub async fn update(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.path).name();
         self.db
             .lock()
             .await
@@ -309,7 +286,7 @@ where
             .lock()
             .await
             .get_document(GetDocumentRequest {
-                name: key.qualify(&self.path).name,
+                name: key.qualify(&self.path).name(),
                 ..GetDocumentRequest::default()
             })
             .await?
@@ -320,7 +297,7 @@ where
     }
 
     pub async fn delete(&self, key: impl QualifyDocumentName) -> anyhow::Result<()> {
-        let name = key.qualify(&self.path).name;
+        let name = key.qualify(&self.path).name();
         self.db
             .lock()
             .await
