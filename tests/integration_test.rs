@@ -2,7 +2,7 @@ use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::Arc;
 use std::{collections::HashSet, fs::read_to_string};
-use tiny_firestore_odm::{get_client, Collection, ObjectWithMetadata};
+use tiny_firestore_odm::{Collection, CollectionName, NamedDocument, get_client};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -25,7 +25,7 @@ async fn empty_collection<T>(collection: &Collection<T>)
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    let items: Vec<ObjectWithMetadata<T>> = collection.list().collect().await;
+    let items: Vec<NamedDocument<T>> = collection.list().collect().await;
 
     for item in items {
         collection.delete(&item.name).await.unwrap();
@@ -51,10 +51,12 @@ fn get_source_and_project() -> (TokenSource, String) {
 async fn do_test() {
     let (source, project_id) = get_source_and_project();
     let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
-    let users: Collection<User> = Collection::new(client, "users", &project_id);
+    let users: Collection<User> = Collection::new(client, CollectionName::new(&project_id, "users"));
 
     // Delete existing documents to create fresh start.
     empty_collection(&users).await;
+
+    println!("h4");
 
     // Create a pair of users.
     let mut u1 = User {
@@ -76,17 +78,17 @@ async fn do_test() {
     let u2_key = users.create(&u2).await.expect("Error creating user.");
 
     // Fetch users and check that results match expectations.
-    let users_list: Vec<ObjectWithMetadata<User>> = users.list().collect().await;
-    let users_list: HashSet<ObjectWithMetadata<User>> = users_list.into_iter().collect();
+    let users_list: Vec<NamedDocument<User>> = users.list().collect().await;
+    let users_list: HashSet<NamedDocument<User>> = users_list.into_iter().collect();
 
-    let mut expected: HashSet<ObjectWithMetadata<User>> = HashSet::new();
+    let mut expected: HashSet<NamedDocument<User>> = HashSet::new();
 
-    expected.insert(ObjectWithMetadata {
+    expected.insert(NamedDocument {
         name: u1_key.clone(),
         value: u1.clone(),
     });
 
-    expected.insert(ObjectWithMetadata {
+    expected.insert(NamedDocument {
         name: u2_key,
         value: u2,
     });

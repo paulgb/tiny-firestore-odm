@@ -8,6 +8,7 @@ use firestore_serde::firestore::{Document, ListDocumentsRequest};
 use googapis::CERTIFICATES;
 use google_authz::{AddAuthorization, Credentials, TokenSource};
 use hyper::Uri;
+pub use identifiers::{CollectionName, DocumentName, QualifyDocumentName};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -19,46 +20,22 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Code;
 
 mod dynamic_firestore_client;
+mod identifiers;
 
 const FIRESTORE_API_DOMAIN: &str = "firestore.googleapis.com";
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
-pub struct QualifiedDocumentName {
-    name: String,
-}
-
-pub trait QualifyDocumentName {
-    fn qualify(&self, path: &str) -> QualifiedDocumentName;
-}
-
-impl QualifyDocumentName for &str {
-    fn qualify(&self, path: &str) -> QualifiedDocumentName {
-        QualifiedDocumentName {
-            name: format!("{}/{}", path, self),
-        }
-    }
-}
-
-impl QualifyDocumentName for &QualifiedDocumentName {
-    fn qualify(&self, _path: &str) -> QualifiedDocumentName {
-        (*self).clone()
-    }
-}
 
 pub struct Collection<T>
 where
     T: Serialize + DeserializeOwned + 'static,
 {
     db: SharedFirestoreClient,
-    collection_id: String,
-    parent: String,
-    path: String,
+    name: CollectionName,
     _ph: PhantomData<T>,
 }
 
 #[derive(Hash, PartialEq, Debug, Eq)]
-pub struct ObjectWithMetadata<T> {
-    pub name: QualifiedDocumentName,
+pub struct NamedDocument<T> {
+    pub name: DocumentName,
     pub value: T,
 }
 
@@ -66,8 +43,7 @@ pub struct ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    parent: String,
-    collection_id: String,
+    collection: CollectionName,
     page_token: Option<String>,
     items: VecDeque<Document>,
     depleated: bool,
@@ -81,10 +57,9 @@ impl<T> ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    pub fn new(parent: String, collection_id: String, db: SharedFirestoreClient) -> Self {
+    pub fn new(collection: CollectionName, db: SharedFirestoreClient) -> Self {
         ListResponse {
-            parent,
-            collection_id,
+            collection,
             page_token: None,
             items: VecDeque::default(),
             db,
@@ -125,7 +100,7 @@ impl<T> Stream for ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    type Item = ObjectWithMetadata<T>;
+    type Item = NamedDocument<T>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
@@ -138,13 +113,11 @@ where
 
         loop {
             if let Some(doc) = self_mut.items.pop_front() {
-                let name = QualifiedDocumentName {
-                    name: doc.name.clone(),
-                };
+                let name = DocumentName::parse(&doc.name).unwrap();
                 let value =
                     firestore_serde::from_document(doc).expect("Could not convert document.");
 
-                return Poll::Ready(Some(ObjectWithMetadata { name, value }));
+                return Poll::Ready(Some(NamedDocument { name, value }));
             }
 
             if let Some(fut) = &mut self_mut.future {
@@ -166,9 +139,11 @@ where
                 };
             }
 
+            dbg!(self_mut.collection.parent().name());
+
             let fut = Box::pin(Self::fetch_documents(
-                self_mut.parent.clone(),
-                self_mut.collection_id.clone(),
+                self_mut.collection.parent().name(),
+                self_mut.collection.leaf_name(),
                 self_mut.page_token.clone(),
                 self_mut.db.clone(),
             ));
@@ -183,23 +158,17 @@ impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned + Unpin,
 {
-    pub fn new(db: SharedFirestoreClient, collection_id: &str, project_id: &str) -> Self {
-        let parent = format!("projects/{}/databases/(default)/documents", project_id);
-        let path = format!("{}/{}", parent, collection_id);
-
+    pub fn new(db: SharedFirestoreClient, name: CollectionName) -> Self {
         Collection {
             db,
-            collection_id: collection_id.to_string(),
-            path,
-            parent,
+            name,
             _ph: PhantomData::default(),
         }
     }
 
     pub fn list(&self) -> ListResponse<T> {
         ListResponse::new(
-            self.parent.clone(),
-            self.collection_id.clone(),
+            self.name.clone(),
             self.db.clone(),
         )
     }
@@ -214,7 +183,7 @@ where
     ) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
 
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.name).name();
         self.db
             .lock()
             .await
@@ -233,7 +202,7 @@ where
     /// Returns `true` if the document was created, or `false` if it already existed.
     pub async fn try_create(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<bool> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.name).name();
         let result = self
             .db
             .lock()
@@ -255,7 +224,7 @@ where
     }
 
     /// Add the given document to this collection, assigning it a new key at random.
-    pub async fn create(&self, ob: &T) -> anyhow::Result<QualifiedDocumentName> {
+    pub async fn create(&self, ob: &T) -> anyhow::Result<DocumentName> {
         let document = firestore_serde::to_document(ob)?;
         let result = self
             .db
@@ -263,18 +232,18 @@ where
             .await
             .create_document(CreateDocumentRequest {
                 document: Some(document),
-                collection_id: self.collection_id.to_string(),
-                parent: self.parent.to_string(),
+                collection_id: self.name.leaf_name(),
+                parent: self.name.parent().name(),
                 ..CreateDocumentRequest::default()
             })
             .await?
             .into_inner();
-        Ok(QualifiedDocumentName { name: result.name })
+        Ok(DocumentName::parse(&result.name)?)
     }
 
     pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.name).name();
         self.db
             .lock()
             .await
@@ -288,7 +257,7 @@ where
 
     pub async fn update(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name;
+        document.name = key.qualify(&self.name).name();
         self.db
             .lock()
             .await
@@ -309,7 +278,7 @@ where
             .lock()
             .await
             .get_document(GetDocumentRequest {
-                name: key.qualify(&self.path).name,
+                name: key.qualify(&self.name).name(),
                 ..GetDocumentRequest::default()
             })
             .await?
@@ -320,7 +289,7 @@ where
     }
 
     pub async fn delete(&self, key: impl QualifyDocumentName) -> anyhow::Result<()> {
-        let name = key.qualify(&self.path).name;
+        let name = key.qualify(&self.name).name();
         self.db
             .lock()
             .await
