@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 use tonic::{body::BoxBody, client::GrpcService, transport::channel::ResponseFuture};
 use tower_service::Service;
 
+/// A Service which uses dynamic dispatch on another service.
+///
+/// This mainly prevents the service type from polluting everything else.
 pub struct WrappedService {
     service: Box<
         dyn Service<

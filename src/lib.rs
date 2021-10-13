@@ -1,13 +1,10 @@
-use anyhow::Result;
-use dynamic_firestore_client::{DynamicFirestoreClient, SharedFirestoreClient, WrappedService};
+pub use client::{get_client, get_client_default};
+use dynamic_firestore_client::SharedFirestoreClient;
 use firestore_serde::firestore::{
-    firestore_client::FirestoreClient, precondition::ConditionType, CreateDocumentRequest,
-    DeleteDocumentRequest, GetDocumentRequest, Precondition, UpdateDocumentRequest,
+    precondition::ConditionType, CreateDocumentRequest, DeleteDocumentRequest, GetDocumentRequest,
+    Precondition, UpdateDocumentRequest,
 };
 use firestore_serde::firestore::{Document, ListDocumentsRequest};
-use googapis::CERTIFICATES;
-use google_authz::{AddAuthorization, Credentials, TokenSource};
-use hyper::Uri;
 pub use identifiers::{CollectionName, DocumentName, QualifyDocumentName};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::VecDeque;
@@ -16,14 +13,24 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::Poll;
 use tokio_stream::Stream;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Code;
 
+mod client;
 mod dynamic_firestore_client;
 mod identifiers;
 
-const FIRESTORE_API_DOMAIN: &str = "firestore.googleapis.com";
+/// Represents a key/value pair, where the key (name) is a fully-qualified path to the document.
+#[derive(Hash, PartialEq, Debug, Eq)]
+pub struct NamedDocument<T> {
+    pub name: DocumentName,
+    pub value: T,
+}
 
+/// Represents a collection of documents in a Firestore database.
+///
+/// Documents in Firestore do not have types, but on the Rust end, we associate each collection
+/// with a type. Documents are serialized into and deserialized from this type when writing/reading
+/// to Firestore.
 pub struct Collection<T>
 where
     T: Serialize + DeserializeOwned + 'static,
@@ -33,23 +40,30 @@ where
     _ph: PhantomData<T>,
 }
 
-#[derive(Hash, PartialEq, Debug, Eq)]
-pub struct NamedDocument<T> {
-    pub name: DocumentName,
-    pub value: T,
-}
-
 type ListResponseFuture = Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>;
 
+/// Stream of documents returned from a Firestore list query.
 pub struct ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
+    /// The collection we are fetching from.
     collection: CollectionName,
+
+    /// A token provided by Firestore for pagination of list results.
     page_token: Option<String>,
+
+    /// A buffer of items returned from the server.
     items: VecDeque<Document>,
+
+    /// True if we have fetched all of the items from the server. We may still be able to return items
+    /// from the buffer. Once depleated == true && items.is_empty(), this stream is exhausted.
     depleated: bool,
+
+    /// A shared handle to the Firestore client.
     db: SharedFirestoreClient,
+
+    /// A handle to the future, held when we are waiting for more data from the server.
     future: Option<ListResponseFuture>,
 
     _ph: PhantomData<T>,
@@ -59,7 +73,11 @@ impl<T> ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    pub fn new(collection: CollectionName, db: SharedFirestoreClient) -> Self {
+    /// Construct a ListResponse object.
+    ///
+    /// Items are lazily loaded; we do not ask Firestore for a list
+    /// of documents until the first document in the stream is awaited.
+    fn new(collection: CollectionName, db: SharedFirestoreClient) -> Self {
         ListResponse {
             collection,
             page_token: None,
@@ -71,6 +89,8 @@ where
         }
     }
 
+    /// Fetch a chunk of documents from the server. The future returned by this function
+    /// gets stored in self.future.
     async fn fetch_documents(
         parent: String,
         collection_id: String,
@@ -108,12 +128,15 @@ where
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
+        // If depleated is true AND the items buffer is empty, we are done.
         if self.depleated && self.items.is_empty() {
             return Poll::Ready(None);
         }
         let self_mut = self.get_mut();
 
+        // Loop because some actions cause a state change that allow us to make progress.
         loop {
+            // If the items buffer is not empty, we can return a result immediately.
             if let Some(doc) = self_mut.items.pop_front() {
                 let name = DocumentName::parse(&doc.name).unwrap();
                 let value =
@@ -122,6 +145,7 @@ where
                 return Poll::Ready(Some(NamedDocument { name, value }));
             }
 
+            // If we are already waiting for a response from the server, we poll it.
             if let Some(fut) = &mut self_mut.future {
                 return match fut.as_mut().poll(cx) {
                     Poll::Pending => Poll::Pending,
@@ -141,8 +165,7 @@ where
                 };
             }
 
-            dbg!(self_mut.collection.parent().name());
-
+            // Store a future for the remaining documents. It will be polled when the loop continues.
             let fut = Box::pin(Self::fetch_documents(
                 self_mut.collection.parent().name(),
                 self_mut.collection.leaf_name(),
@@ -155,11 +178,11 @@ where
     }
 }
 
-#[allow(unused)]
 impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned + Unpin,
 {
+    /// Construct a top-level collection (i.e. a collection whose parent is the root.)
     pub fn new(db: SharedFirestoreClient, name: CollectionName) -> Self {
         Collection {
             db,
@@ -168,6 +191,7 @@ where
         }
     }
 
+    /// Returns a stream of all of the documents in a collection (as [NamedDocument]s).
     pub fn list(&self) -> ListResponse<T> {
         ListResponse::new(self.name.clone(), self.db.clone())
     }
@@ -182,7 +206,7 @@ where
     ) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
 
-        document.name = key.qualify(&self.name).name();
+        document.name = key.qualify(&self.name)?.name();
         self.db
             .lock()
             .await
@@ -201,7 +225,7 @@ where
     /// Returns `true` if the document was created, or `false` if it already existed.
     pub async fn try_create(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<bool> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.name).name();
+        document.name = key.qualify(&self.name)?.name();
         let result = self
             .db
             .lock()
@@ -240,9 +264,10 @@ where
         Ok(DocumentName::parse(&result.name)?)
     }
 
+    /// Overwrite the given document to this collection, creating a new document if one does not exist.
     pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.name).name();
+        document.name = key.qualify(&self.name)?.name();
         self.db
             .lock()
             .await
@@ -254,9 +279,10 @@ where
         Ok(())
     }
 
+    /// Update the given document, returning an error if it does not exist.
     pub async fn update(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.name).name();
+        document.name = key.qualify(&self.name)?.name();
         self.db
             .lock()
             .await
@@ -271,13 +297,14 @@ where
         Ok(())
     }
 
+    /// Get the document with a given key.
     pub async fn get(&self, key: impl QualifyDocumentName) -> anyhow::Result<T> {
         let document = self
             .db
             .lock()
             .await
             .get_document(GetDocumentRequest {
-                name: key.qualify(&self.name).name(),
+                name: key.qualify(&self.name)?.name(),
                 ..GetDocumentRequest::default()
             })
             .await?
@@ -287,8 +314,9 @@ where
             .map_err(|_| anyhow::anyhow!("Error deserializing."))
     }
 
+    /// Delete the document with a given key.
     pub async fn delete(&self, key: impl QualifyDocumentName) -> anyhow::Result<()> {
-        let name = key.qualify(&self.name).name();
+        let name = key.qualify(&self.name)?.name();
         self.db
             .lock()
             .await
@@ -301,31 +329,4 @@ where
             .await?;
         Ok(())
     }
-}
-
-pub async fn get_client(source: impl Into<TokenSource>) -> Result<DynamicFirestoreClient> {
-    let tls_config = ClientTlsConfig::new()
-        .ca_certificate(Certificate::from_pem(CERTIFICATES))
-        .domain_name(FIRESTORE_API_DOMAIN);
-
-    let base_url = Uri::builder()
-        .scheme("https")
-        .authority(FIRESTORE_API_DOMAIN)
-        .path_and_query("")
-        .build()?;
-
-    let channel = Channel::builder(base_url)
-        .tls_config(tls_config)?
-        .connect()
-        .await?;
-
-    let authorized_channel = AddAuthorization::init_with(source, channel);
-
-    let client = FirestoreClient::new(WrappedService::new(authorized_channel));
-
-    Ok(client)
-}
-
-pub async fn get_client_default() -> Result<DynamicFirestoreClient> {
-    get_client(Credentials::default().await).await
 }

@@ -1,27 +1,44 @@
 use std::error::Error;
 use std::fmt::Display;
 
+/// Errors relating to parsing a DocumentName or CollectionName.
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
+    /// The string does not have enough slash-delimited parts to be understood.
     TooFewParts(usize),
+
+    /// The string has the wrong number of parts for the type it is being parsed as.
+    ///
+    /// Collections have an even number of parts (5 fixed + collection name).
+    /// Documents have an odd number of parts (5 fixed + n * 2 (collection/name pairs)).
     WrongNumberOfParts(usize),
+
+    /// A part of the path that was expected to be a well-known string was not.
+    ///
+    /// The parameter indicates the index of the offending part.
     InvalidPart(usize),
 }
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            ParseError::InvalidPart(part) => write!(f, "Invalid part at index {}", part),
+            ParseError::WrongNumberOfParts(parts) => write!(f, "Invalid number of parts {}", parts),
+            ParseError::TooFewParts(parts) => write!(f, "Expected at least 6 parts, got {}", parts),
+        }
     }
 }
 
 impl Error for ParseError {}
 
+/// Represents the parent of a collection, which is either another document or the “root” collection.
 pub enum ParentDocumentOrRoot {
     Root { project_id: String },
     ParentDocument { document: DocumentName },
 }
 
 impl ParentDocumentOrRoot {
+    /// Returns a string suitable for passing in the Firestore API as a `parent` parameter.
     pub fn name(&self) -> String {
         match self {
             Self::Root { project_id } => {
@@ -31,6 +48,7 @@ impl ParentDocumentOrRoot {
         }
     }
 
+    /// Returns the collection above this one, if it is not the root collection.
     pub fn parent(&self) -> Option<CollectionName> {
         match self {
             Self::Root { .. } => None,
@@ -39,6 +57,7 @@ impl ParentDocumentOrRoot {
     }
 }
 
+/// Represents the fully-qualified path of a collection.
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub struct CollectionName {
     project_id: String,
@@ -50,10 +69,14 @@ pub struct CollectionName {
 }
 
 impl CollectionName {
+    /// Construct a `CollectionName` for a top-level collection, i.e. a direct descendent of the root.
+    ///
+    /// Equivalent to `new_with_path` with an empty `path`.
     pub fn new(project_id: &str, collection: &str) -> Self {
         CollectionName::new_with_path(project_id, &[], collection)
     }
 
+    /// Construct a `CollectionName` nested under a document.
     pub fn new_with_path(project_id: &str, path: &[(&str, &str)], collection: &str) -> Self {
         let parent_path: Vec<(String, String)> = path
             .iter()
@@ -67,6 +90,7 @@ impl CollectionName {
         }
     }
 
+    /// Return a representation of the parent of this collection, which may either be a document or the root.
     pub fn parent(&self) -> ParentDocumentOrRoot {
         let mut parent_path = self.parent_path.clone();
 
@@ -88,10 +112,14 @@ impl CollectionName {
         }
     }
 
+    /// Return the collection of the document that this collection is nested under, if it exists.
+    ///
+    /// If this collection is directly under the root, returns `None`.
     pub fn parent_collection(&self) -> Option<Self> {
         self.parent().parent()
     }
 
+    /// Return a reference to a named document directly under this collection.
     pub fn document(&self, name: &str) -> DocumentName {
         DocumentName {
             collection: self.clone(),
@@ -99,10 +127,12 @@ impl CollectionName {
         }
     }
 
+    /// Returns the short name of this collection without the full path.
     pub fn leaf_name(&self) -> String {
         self.collection.clone()
     }
 
+    /// Returns the fully-qualified name of this collection as a string.
     pub fn name(&self) -> String {
         let path = if self.parent_path.is_empty() {
             format!("documents/{}", self.collection)
@@ -119,6 +149,7 @@ impl CollectionName {
         format!("projects/{}/databases/(default)/{}", self.project_id, path)
     }
 
+    /// Attempt to parse a collection name from a slash-delimited string.
     pub fn parse(name: &str) -> Result<Self, ParseError> {
         let parts: Vec<&str> = name.split('/').into_iter().collect();
 
@@ -163,6 +194,7 @@ impl CollectionName {
     }
 }
 
+/// Represents a fully-qualified Firestore document name.
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub struct DocumentName {
     collection: CollectionName,
@@ -170,10 +202,12 @@ pub struct DocumentName {
 }
 
 impl DocumentName {
+    /// Returns this document name as a fully-qualified string.
     pub fn name(&self) -> String {
         format!("{}/{}", self.collection.name(), self.name)
     }
 
+    /// Parse a document name from a fully-qualified string.
     pub fn parse(name: &str) -> Result<Self, ParseError> {
         let (collection_name, name) = name.rsplit_once("/").unwrap();
 
@@ -186,25 +220,104 @@ impl DocumentName {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum QualifyError {
+    ProjectMismatch(String, String),
+    CollectionMismatch(CollectionName, CollectionName),
+}
+
+impl Display for QualifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProjectMismatch(expected, actual) => write!(
+                f,
+                "Attempted a collection-level operation with a document name from a different project. This collection has project {} but attempted operation had project {}",
+                expected,
+                actual),
+            Self::CollectionMismatch(expected, actual) => write!(
+                f,
+                "Attempted to a collection-level operation with a document name from a different collection. This collection has the path {}, but attempted operation has the path {}", 
+                expected.name(),
+                actual.name())
+        }
+    }
+}
+
+impl Error for QualifyError {}
+
+/// Represents a type that can be turned into a fully-qualified document name.
 pub trait QualifyDocumentName {
-    fn qualify(&self, parent: &CollectionName) -> DocumentName;
+    /// Create a document name from self, using the given collection as its parent.
+    fn qualify(&self, parent: &CollectionName) -> Result<DocumentName, QualifyError>;
 }
 
 impl QualifyDocumentName for &str {
-    fn qualify(&self, parent: &CollectionName) -> DocumentName {
-        parent.document(self)
+    fn qualify(&self, parent: &CollectionName) -> Result<DocumentName, QualifyError> {
+        Ok(parent.document(self))
     }
 }
 
 impl QualifyDocumentName for &DocumentName {
-    fn qualify(&self, _parent: &CollectionName) -> DocumentName {
-        (*self).clone()
+    fn qualify(&self, parent: &CollectionName) -> Result<DocumentName, QualifyError> {
+        if self.collection.project_id != parent.project_id {
+            return Err(QualifyError::ProjectMismatch(
+                self.collection.project_id.to_string(),
+                parent.project_id.to_string(),
+            ));
+        }
+
+        if &self.collection != parent {
+            return Err(QualifyError::CollectionMismatch(
+                self.collection.clone(),
+                parent.clone(),
+            ));
+        }
+
+        Ok((*self).clone())
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_qualify() {
+        let collection = CollectionName::new("my-project", "things");
+
+        assert_eq!(
+            "projects/my-project/databases/(default)/documents/things/blah",
+            "blah".qualify(&collection).unwrap().name()
+        );
+
+        let doc = collection.document("mydoc");
+
+        assert_eq!(
+            "projects/my-project/databases/(default)/documents/things/mydoc",
+            (&doc).qualify(&collection).unwrap().name()
+        );
+    }
+
+    #[test]
+    fn test_fail_qualify() {
+        let collection1 = CollectionName::new("my-project", "things");
+        let collection2 = CollectionName::new("my-project", "stuff");
+        let collection3 = CollectionName::new("my-other-project", "stuff");
+
+        assert_eq!(
+            QualifyError::CollectionMismatch(collection1.clone(), collection2.clone()),
+            (&collection1.document("foobar"))
+                .qualify(&collection2)
+                .unwrap_err()
+        );
+
+        assert_eq!(
+            QualifyError::ProjectMismatch("my-project".to_string(), "my-other-project".to_string()),
+            (&collection1.document("foobar"))
+                .qualify(&collection3)
+                .unwrap_err()
+        );
+    }
 
     #[test]
     fn test_construct_document_name() {
