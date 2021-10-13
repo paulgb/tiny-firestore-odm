@@ -8,7 +8,7 @@ use firestore_serde::firestore::{Document, ListDocumentsRequest};
 use googapis::CERTIFICATES;
 use google_authz::{AddAuthorization, Credentials, TokenSource};
 use hyper::Uri;
-use identifiers::{CollectionName, DocumentName, QualifyDocumentName};
+pub use identifiers::{CollectionName, DocumentName, QualifyDocumentName};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -57,7 +57,7 @@ impl<T> ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    pub fn new(parent: String, collection: CollectionName, db: SharedFirestoreClient) -> Self {
+    pub fn new(collection: CollectionName, db: SharedFirestoreClient) -> Self {
         ListResponse {
             collection,
             page_token: None,
@@ -140,8 +140,8 @@ where
             }
 
             let fut = Box::pin(Self::fetch_documents(
-                self_mut.parent.clone(),
-                self_mut.collection_id.clone(),
+                self_mut.collection.parent().name(),
+                self_mut.collection.leaf_name(),
                 self_mut.page_token.clone(),
                 self_mut.db.clone(),
             ));
@@ -156,23 +156,17 @@ impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned + Unpin,
 {
-    pub fn new(db: SharedFirestoreClient, collection_id: &str, project_id: &str) -> Self {
-        let parent = format!("projects/{}/databases/(default)/documents", project_id);
-        let path = format!("{}/{}", parent, collection_id);
-
+    pub fn new(db: SharedFirestoreClient, name: CollectionName) -> Self {
         Collection {
             db,
-            collection_id: collection_id.to_string(),
-            path,
-            parent,
+            name,
             _ph: PhantomData::default(),
         }
     }
 
     pub fn list(&self) -> ListResponse<T> {
         ListResponse::new(
-            self.parent.clone(),
-            self.collection_id.clone(),
+            self.name.clone(),
             self.db.clone(),
         )
     }
@@ -187,7 +181,7 @@ where
     ) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
 
-        document.name = key.qualify(&self.path).name();
+        document.name = key.qualify(&self.name).name();
         self.db
             .lock()
             .await
@@ -206,7 +200,7 @@ where
     /// Returns `true` if the document was created, or `false` if it already existed.
     pub async fn try_create(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<bool> {
         let mut document = firestore_serde::to_document(ob)?;
-        document.name = key.qualify(&self.path).name();
+        document.name = key.qualify(&self.name).name();
         let result = self
             .db
             .lock()
@@ -236,8 +230,8 @@ where
             .await
             .create_document(CreateDocumentRequest {
                 document: Some(document),
-                collection_id: self.collection_id.to_string(),
-                parent: self.parent.to_string(),
+                collection_id: self.name.leaf_name(),
+                parent: self.name.parent().name(),
                 ..CreateDocumentRequest::default()
             })
             .await?

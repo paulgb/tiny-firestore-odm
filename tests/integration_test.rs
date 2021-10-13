@@ -2,7 +2,7 @@ use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::Arc;
 use std::{collections::HashSet, fs::read_to_string};
-use tiny_firestore_odm::{get_client, Collection, ObjectWithMetadata};
+use tiny_firestore_odm::{Collection, CollectionName, ObjectWithMetadata, get_client};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -51,7 +51,7 @@ fn get_source_and_project() -> (TokenSource, String) {
 async fn do_test() {
     let (source, project_id) = get_source_and_project();
     let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
-    let users: Collection<User> = Collection::new(client, "users", &project_id);
+    let users: Collection<User> = Collection::new(client, CollectionName::new("users", &project_id));
 
     // Delete existing documents to create fresh start.
     empty_collection(&users).await;

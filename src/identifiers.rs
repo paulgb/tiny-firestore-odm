@@ -16,96 +16,35 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
-enum CollectionPath {
-    Root,
-    Path {
-        /// Vector of (collection, name) pairs of parent.
-        parent_path: Vec<(String, String)>,
-
-        /// Name of the "leaf" collection.
-        collection: String,
-    },
+pub enum ParentDocumentOrRoot {
+    Root { project_id: String },
+    ParentDocument { document: DocumentName },
 }
 
-impl CollectionPath {
-    fn parent(&self) -> Option<(Self, Option<String>)> {
+impl ParentDocumentOrRoot {
+    pub fn name(&self) -> String {
         match self {
-            CollectionPath::Root => None,
-            CollectionPath::Path { parent_path, .. } => {
-                let mut parent_path = parent_path.clone();
-
-                if let Some((collection, name)) = parent_path.pop() {
-                    Some((
-                        CollectionPath::Path {
-                            parent_path,
-                            collection,
-                        },
-                        Some(name),
-                    ))
-                } else {
-                    Some((CollectionPath::Root, None))
-                }
-            }
+            Self::Root { project_id } => format!("projects/{}/databases/(default)/documents", project_id),
+            Self::ParentDocument { document } => document.name(),
         }
     }
 
-    fn name(&self) -> String {
+    pub fn parent(&self) -> Option<CollectionName> {
         match self {
-            CollectionPath::Root => "documents".to_string(),
-            CollectionPath::Path {
-                parent_path,
-                collection,
-            } => {
-                if parent_path.is_empty() {
-                    format!("documents/{}", collection)
-                } else {
-                    let path_parts: Vec<String> = parent_path
-                        .iter()
-                        .map(|(collection, name)| format!("{}/{}", collection, name))
-                        .collect();
-                    let path: String = path_parts.join("/");
-                    format!("documents/{}/{}", path, collection)
-                }
-            }
+            Self::Root { .. } => None,
+            Self::ParentDocument { document } => Some(document.collection.clone()),
         }
-    }
-
-    fn parse(path: &[&str]) -> Result<Self, ParseError> {
-        if path.get(0) != Some(&"documents") {
-            return Err(ParseError::InvalidPart(4));
-        }
-
-        if path.len() == 1 {
-            return Ok(CollectionPath::Root);
-        }
-
-        if path.len() % 2 != 0 {
-            return Err(ParseError::WrongNumberOfParts(path.len() + 4));
-        }
-
-        let depth = (path.len() - 2) / 2;
-        let parent_path: Vec<(String, String)> = (0..depth)
-            .map(|d| {
-                (
-                    path.get(1 + d * 2).unwrap().to_string(),
-                    path.get(2 + d * 2).unwrap().to_string(),
-                )
-            })
-            .collect();
-        let collection = path.last().unwrap().to_string();
-
-        Ok(CollectionPath::Path {
-            collection,
-            parent_path,
-        })
     }
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub struct CollectionName {
     project_id: String,
-    path: CollectionPath,
+    /// Vector of (collection, name) pairs of parent.
+    parent_path: Vec<(String, String)>,
+
+    /// Name of the "leaf" collection.
+    collection: String,
 }
 
 impl CollectionName {
@@ -121,36 +60,32 @@ impl CollectionName {
 
         CollectionName {
             project_id: project_id.to_string(),
-            path: CollectionPath::Path {
-                parent_path,
-                collection: collection.to_string(),
-            },
+            parent_path,
+            collection: collection.to_string(),
         }
     }
 
-    pub fn root(project_id: &str) -> Self {
-        CollectionName {
-            project_id: project_id.to_string(),
-            path: CollectionPath::Root,
-        }
-    }
+    pub fn parent(&self) -> ParentDocumentOrRoot {
+        let mut parent_path = self.parent_path.clone();
 
-    pub fn parent(&self) -> Option<DocumentName> {
-        let (parent_collection, parent_name) = self.path.parent()?;
-        Some(DocumentName {
-            collection: CollectionName {
-                path: parent_collection,
-                project_id: self.project_id.clone(),
-            },
-            name: parent_name?,
-        })
+        if let Some((collection, name)) = parent_path.pop() {
+            ParentDocumentOrRoot::ParentDocument {
+                document: DocumentName {
+                    collection: CollectionName {
+                        project_id: self.project_id.clone(),
+                        parent_path: parent_path,
+                        collection,
+                    },
+                    name,
+                },
+            }
+        } else {
+            ParentDocumentOrRoot::Root {project_id: self.project_id.clone()}
+        }
     }
 
     pub fn parent_collection(&self) -> Option<Self> {
-        Some(CollectionName {
-            project_id: self.project_id.clone(),
-            path: self.path.parent()?.0,
-        })
+        self.parent().parent()
     }
 
     pub fn document(&self, name: &str) -> DocumentName {
@@ -160,12 +95,24 @@ impl CollectionName {
         }
     }
 
+    pub fn leaf_name(&self) -> String {
+        self.collection.clone()
+    }
+
     pub fn name(&self) -> String {
-        format!(
-            "projects/{}/databases/(default)/{}",
-            self.project_id,
-            self.path.name()
-        )
+        let path = if self.parent_path.is_empty() {
+            format!("documents/{}", self.collection)
+        } else {
+            let path_parts: Vec<String> = self
+                .parent_path
+                .iter()
+                .map(|(collection, name)| format!("{}/{}", collection, name))
+                .collect();
+            let path: String = path_parts.join("/");
+            format!("documents/{}/{}", path, self.collection)
+        };
+
+        format!("projects/{}/databases/(default)/{}", self.project_id, path)
     }
 
     pub fn parse(name: &str) -> Result<Self, ParseError> {
@@ -173,6 +120,8 @@ impl CollectionName {
 
         if parts.len() < 5 {
             return Err(ParseError::TooFewParts(parts.len()));
+        } else if parts.len() % 2 != 0 {
+            return Err(ParseError::WrongNumberOfParts(parts.len()));
         }
 
         if parts.get(0) != Some(&"projects") {
@@ -184,13 +133,28 @@ impl CollectionName {
         if parts.get(3) != Some(&"(default)") {
             return Err(ParseError::InvalidPart(3));
         }
+        if parts.get(4) != Some(&"documents") {
+            return Err(ParseError::InvalidPart(4));
+        }
 
-        let path_parts = &parts[4..];
         let project_id = parts.get(1).unwrap().to_string();
+
+        let depth = (parts.len() - 6) / 2;
+
+        let parent_path: Vec<(String, String)> = (0..depth)
+            .map(|d| {
+                (
+                    parts.get(5 + d * 2).unwrap().to_string(),
+                    parts.get(6 + d * 2).unwrap().to_string(),
+                )
+            })
+            .collect();
+        let collection = parts.last().unwrap().to_string();
 
         Ok(CollectionName {
             project_id,
-            path: CollectionPath::parse(path_parts)?,
+            collection,
+            parent_path,
         })
     }
 }
@@ -249,7 +213,7 @@ mod test {
 
         assert_eq!(
             "projects/my-project/databases/(default)/documents",
-            collection.parent_collection().unwrap().name()
+            collection.parent().name()
         );
 
         let doc1 = collection.document("thing1");
@@ -275,28 +239,13 @@ mod test {
     }
 
     #[test]
-    fn test_parse_root_collection() {
-        let name_to_parse = "projects/employee-directory/databases/(default)/documents";
-
-        let expected = CollectionName {
-            path: CollectionPath::Root,
-            project_id: "employee-directory".to_string(),
-        };
-
-        let result = CollectionName::parse(name_to_parse).unwrap();
-
-        assert_eq!(expected, result);
-    }
-
-    #[test]
     fn test_parse_collection_name() {
         let name_to_parse = "projects/employee-directory/databases/(default)/documents/people";
 
         let expected = CollectionName {
-            path: CollectionPath::Path {
-                collection: "people".to_string(),
-                parent_path: vec![],
-            },
+            collection: "people".to_string(),
+            parent_path: vec![],
+
             project_id: "employee-directory".to_string(),
         };
 
@@ -311,13 +260,11 @@ mod test {
             "projects/stuff/databases/(default)/documents/people/john/items/phone/apps";
 
         let expected = CollectionName {
-            path: CollectionPath::Path {
-                collection: "apps".to_string(),
-                parent_path: vec![
-                    ("people".to_string(), "john".to_string()),
-                    ("items".to_string(), "phone".to_string()),
-                ],
-            },
+            collection: "apps".to_string(),
+            parent_path: vec![
+                ("people".to_string(), "john".to_string()),
+                ("items".to_string(), "phone".to_string()),
+            ],
             project_id: "stuff".to_string(),
         };
 
@@ -333,13 +280,11 @@ mod test {
 
         let expected = DocumentName {
             collection: CollectionName {
-                path: CollectionPath::Path {
-                    collection: "apps".to_string(),
-                    parent_path: vec![
-                        ("people".to_string(), "john".to_string()),
-                        ("items".to_string(), "phone".to_string()),
-                    ],
-                },
+                collection: "apps".to_string(),
+                parent_path: vec![
+                    ("people".to_string(), "john".to_string()),
+                    ("items".to_string(), "phone".to_string()),
+                ],
                 project_id: "stuff".to_string(),
             },
             name: "clock".to_string(),
@@ -398,10 +343,9 @@ mod test {
 
         let expected = DocumentName {
             collection: CollectionName {
-                path: CollectionPath::Path {
-                    collection: "people".to_string(),
-                    parent_path: vec![],
-                },
+                collection: "people".to_string(),
+                parent_path: vec![],
+
                 project_id: "employee-directory".to_string(),
             },
             name: "jack".to_string(),
@@ -428,13 +372,14 @@ mod test {
             result.name()
         );
 
-        let result = result.parent().unwrap();
+        let result = result.parent();
 
         assert_eq!(
             "projects/stuff/databases/(default)/documents/people/john/items/phone",
             result.name()
         );
 
+        /*
         let result = result.collection;
 
         assert_eq!(
@@ -455,14 +400,15 @@ mod test {
             "projects/stuff/databases/(default)/documents",
             result.name()
         );
+         */
     }
 
     #[test]
     fn test_walk_from_root() {
-        let collection = CollectionName::root("my-project");
+        let collection = CollectionName::new("my-project", "beers");
 
         assert_eq!(
-            "projects/my-project/databases/(default)/documents",
+            "projects/my-project/databases/(default)/documents/beers",
             collection.name()
         );
     }
