@@ -6,8 +6,6 @@ use tiny_firestore_odm::{get_client, Collection, ObjectWithMetadata};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
-use tonic::codegen::{Body, StdError};
-
 const SCOPES: &[&str] = &["https://www.googleapis.com/auth/cloud-platform"];
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Hash, Clone)]
@@ -23,13 +21,9 @@ struct ProjectIdExtractor {
     project_id: String,
 }
 
-async fn empty_collection<T, K>(collection: &Collection<T, K>)
+async fn empty_collection<T>(collection: &Collection<T>)
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
-    K: tonic::client::GrpcService<tonic::body::BoxBody> + 'static,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     let items: Vec<ObjectWithMetadata<T>> = collection.list().collect().await;
 
@@ -57,7 +51,7 @@ fn get_source_and_project() -> (TokenSource, String) {
 async fn do_test() {
     let (source, project_id) = get_source_and_project();
     let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
-    let users: Collection<User, _> = Collection::new(client, "users", &project_id);
+    let users: Collection<User> = Collection::new(client, "users", &project_id);
 
     // Delete existing documents to create fresh start.
     empty_collection(&users).await;

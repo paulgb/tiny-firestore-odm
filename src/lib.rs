@@ -1,4 +1,5 @@
 use anyhow::Result;
+use dynamic_firestore_client::{DynamicFirestoreClient, SharedFirestoreClient, WrappedService};
 use firestore_serde::firestore::{
     firestore_client::FirestoreClient, precondition::ConditionType, CreateDocumentRequest,
     DeleteDocumentRequest, GetDocumentRequest, Precondition, UpdateDocumentRequest,
@@ -10,20 +11,20 @@ use hyper::Uri;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::VecDeque;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::Poll;
-use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::Mutex;
 use tokio_stream::Stream;
-use tonic::codegen::{Body, StdError};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::Code;
+
+mod dynamic_firestore_client;
 
 const FIRESTORE_API_DOMAIN: &str = "firestore.googleapis.com";
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub struct QualifiedDocumentName {
-    name: String
+    name: String,
 }
 
 pub trait QualifyDocumentName {
@@ -31,8 +32,10 @@ pub trait QualifyDocumentName {
 }
 
 impl QualifyDocumentName for &str {
-    fn qualify(&self, path: &str) -> QualifiedDocumentName{
-        QualifiedDocumentName {name: format!("{}/{}", path, self)}
+    fn qualify(&self, path: &str) -> QualifiedDocumentName {
+        QualifiedDocumentName {
+            name: format!("{}/{}", path, self),
+        }
     }
 }
 
@@ -42,15 +45,11 @@ impl QualifyDocumentName for &QualifiedDocumentName {
     }
 }
 
-pub struct Collection<T, K>
+pub struct Collection<T>
 where
     T: Serialize + DeserializeOwned + 'static,
-    K: tonic::client::GrpcService<tonic::body::BoxBody> + 'static,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
-    db: Arc<Mutex<FirestoreClient<K>>>,
+    db: SharedFirestoreClient,
     collection_id: String,
     parent: String,
     path: String,
@@ -63,34 +62,26 @@ pub struct ObjectWithMetadata<T> {
     pub value: T,
 }
 
-pub struct ListResponse<T, K>
+pub struct ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
-    K: tonic::client::GrpcService<tonic::body::BoxBody> + 'static,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     parent: String,
     collection_id: String,
     page_token: Option<String>,
     items: VecDeque<Document>,
     depleated: bool,
-    db: Arc<Mutex<FirestoreClient<K>>>,
+    db: SharedFirestoreClient,
     future: Option<Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>>,
 
     _ph: PhantomData<T>,
 }
 
-impl<T, K> ListResponse<T, K>
+impl<T> ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
-    K: tonic::client::GrpcService<tonic::body::BoxBody> + 'static,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
-    pub fn new(parent: String, collection_id: String, db: Arc<Mutex<FirestoreClient<K>>>) -> Self {
+    pub fn new(parent: String, collection_id: String, db: SharedFirestoreClient) -> Self {
         ListResponse {
             parent,
             collection_id,
@@ -107,7 +98,7 @@ where
         parent: String,
         collection_id: String,
         page_token: Option<String>,
-        db: Arc<Mutex<FirestoreClient<K>>>,
+        db: SharedFirestoreClient,
     ) -> (VecDeque<Document>, String) {
         let parent = parent;
         let collection_id = collection_id;
@@ -130,13 +121,9 @@ where
     }
 }
 
-impl<T, K> Stream for ListResponse<T, K>
+impl<T> Stream for ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
-    K: tonic::client::GrpcService<tonic::body::BoxBody> + 'static,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     type Item = ObjectWithMetadata<T>;
 
@@ -151,7 +138,9 @@ where
 
         loop {
             if let Some(doc) = self_mut.items.pop_front() {
-                let name = QualifiedDocumentName {name: doc.name.clone()};
+                let name = QualifiedDocumentName {
+                    name: doc.name.clone(),
+                };
                 let value =
                     firestore_serde::from_document(doc).expect("Could not convert document.");
 
@@ -164,7 +153,7 @@ where
                     Poll::Ready(result) => {
                         let (items, page_token) = result;
 
-                        self_mut.page_token = if page_token == "" {
+                        self_mut.page_token = if page_token.is_empty() {
                             self_mut.depleated = true;
                             Some(page_token)
                         } else {
@@ -190,15 +179,11 @@ where
 }
 
 #[allow(unused)]
-impl<T, K> Collection<T, K>
+impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned + Unpin,
-    K: tonic::client::GrpcService<tonic::body::BoxBody>,
-    K::ResponseBody: Body + Send + Sync + 'static,
-    K::Error: Into<StdError>,
-    <K::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
-    pub fn new(db: Arc<Mutex<FirestoreClient<K>>>, collection_id: &str, project_id: &str) -> Self {
+    pub fn new(db: SharedFirestoreClient, collection_id: &str, project_id: &str) -> Self {
         let parent = format!("projects/{}/databases/(default)/documents", project_id);
         let path = format!("{}/{}", parent, collection_id);
 
@@ -211,7 +196,7 @@ where
         }
     }
 
-    pub fn list(&self) -> ListResponse<T, K> {
+    pub fn list(&self) -> ListResponse<T> {
         ListResponse::new(
             self.parent.clone(),
             self.collection_id.clone(),
@@ -222,9 +207,13 @@ where
     /// Create the given document in this collection with the given key.
     /// Returns an error if the key is already in use (if you intend to replace the
     /// document in that case, use `upsert` instead.)
-    pub async fn create_with_key(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
+    pub async fn create_with_key(
+        &self,
+        ob: &T,
+        key: impl QualifyDocumentName,
+    ) -> anyhow::Result<()> {
         let mut document = firestore_serde::to_document(ob)?;
-        
+
         document.name = key.qualify(&self.path).name;
         self.db
             .lock()
@@ -280,7 +269,7 @@ where
             })
             .await?
             .into_inner();
-        Ok(QualifiedDocumentName {name: result.name})
+        Ok(QualifiedDocumentName { name: result.name })
     }
 
     pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {
@@ -338,17 +327,15 @@ where
             .delete_document(DeleteDocumentRequest {
                 name,
                 current_document: Some(Precondition {
-                    condition_type: Some(ConditionType::Exists(true))
-                })
+                    condition_type: Some(ConditionType::Exists(true)),
+                }),
             })
             .await?;
         Ok(())
     }
 }
 
-pub async fn get_client(
-    source: impl Into<TokenSource>,
-) -> Result<FirestoreClient<AddAuthorization<Channel>>> {
+pub async fn get_client(source: impl Into<TokenSource>) -> Result<DynamicFirestoreClient> {
     let tls_config = ClientTlsConfig::new()
         .ca_certificate(Certificate::from_pem(CERTIFICATES))
         .domain_name(FIRESTORE_API_DOMAIN);
@@ -366,11 +353,11 @@ pub async fn get_client(
 
     let authorized_channel = AddAuthorization::init_with(source, channel);
 
-    let client = FirestoreClient::new(authorized_channel);
+    let client = FirestoreClient::new(WrappedService::new(authorized_channel));
 
     Ok(client)
 }
 
-pub async fn get_client_default() -> Result<FirestoreClient<AddAuthorization<Channel>>> {
+pub async fn get_client_default() -> Result<DynamicFirestoreClient> {
     get_client(Credentials::default().await).await
 }
