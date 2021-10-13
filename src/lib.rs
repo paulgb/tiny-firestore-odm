@@ -34,7 +34,7 @@ where
 }
 
 #[derive(Hash, PartialEq, Debug, Eq)]
-pub struct ObjectWithMetadata<T> {
+pub struct NamedDocument<T> {
     pub name: DocumentName,
     pub value: T,
 }
@@ -100,7 +100,7 @@ impl<T> Stream for ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
 {
-    type Item = ObjectWithMetadata<T>;
+    type Item = NamedDocument<T>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
@@ -113,11 +113,11 @@ where
 
         loop {
             if let Some(doc) = self_mut.items.pop_front() {
-                let name = todo!();
+                let name = DocumentName::parse(&doc.name).unwrap();
                 let value =
                     firestore_serde::from_document(doc).expect("Could not convert document.");
 
-                return Poll::Ready(Some(ObjectWithMetadata { name, value }));
+                return Poll::Ready(Some(NamedDocument { name, value }));
             }
 
             if let Some(fut) = &mut self_mut.future {
@@ -138,6 +138,8 @@ where
                     }
                 };
             }
+
+            dbg!(self_mut.collection.parent().name());
 
             let fut = Box::pin(Self::fetch_documents(
                 self_mut.collection.parent().name(),
@@ -236,7 +238,7 @@ where
             })
             .await?
             .into_inner();
-        Ok(todo!())
+        Ok(DocumentName::parse(&result.name)?)
     }
 
     pub async fn upsert(&self, ob: &T, key: impl QualifyDocumentName) -> anyhow::Result<()> {

@@ -379,8 +379,7 @@ mod test {
             result.name()
         );
 
-        /*
-        let result = result.collection;
+        let result = result.parent().unwrap();
 
         assert_eq!(
             "projects/stuff/databases/(default)/documents/people/john/items",
@@ -394,13 +393,12 @@ mod test {
             result.name()
         );
 
-        let result = result.parent_collection().unwrap();
+        let result = result.parent();
 
         assert_eq!(
             "projects/stuff/databases/(default)/documents",
             result.name()
         );
-         */
     }
 
     #[test]
