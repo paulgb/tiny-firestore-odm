@@ -24,7 +24,9 @@ pub enum ParentDocumentOrRoot {
 impl ParentDocumentOrRoot {
     pub fn name(&self) -> String {
         match self {
-            Self::Root { project_id } => format!("projects/{}/databases/(default)/documents", project_id),
+            Self::Root { project_id } => {
+                format!("projects/{}/databases/(default)/documents", project_id)
+            }
             Self::ParentDocument { document } => document.name(),
         }
     }
@@ -54,7 +56,7 @@ impl CollectionName {
 
     pub fn new_with_path(project_id: &str, path: &[(&str, &str)], collection: &str) -> Self {
         let parent_path: Vec<(String, String)> = path
-            .into_iter()
+            .iter()
             .map(|(collection, name)| (collection.to_string(), name.to_string()))
             .collect();
 
@@ -73,14 +75,16 @@ impl CollectionName {
                 document: DocumentName {
                     collection: CollectionName {
                         project_id: self.project_id.clone(),
-                        parent_path: parent_path,
+                        parent_path,
                         collection,
                     },
                     name,
                 },
             }
         } else {
-            ParentDocumentOrRoot::Root {project_id: self.project_id.clone()}
+            ParentDocumentOrRoot::Root {
+                project_id: self.project_id.clone(),
+            }
         }
     }
 
@@ -116,7 +120,7 @@ impl CollectionName {
     }
 
     pub fn parse(name: &str) -> Result<Self, ParseError> {
-        let parts: Vec<&str> = name.split("/").into_iter().collect();
+        let parts: Vec<&str> = name.split('/').into_iter().collect();
 
         if parts.len() < 5 {
             return Err(ParseError::TooFewParts(parts.len()));

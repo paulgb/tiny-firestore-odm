@@ -39,6 +39,8 @@ pub struct NamedDocument<T> {
     pub value: T,
 }
 
+type ListResponseFuture = Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>;
+
 pub struct ListResponse<T>
 where
     T: Serialize + DeserializeOwned + Unpin + 'static,
@@ -48,7 +50,7 @@ where
     items: VecDeque<Document>,
     depleated: bool,
     db: SharedFirestoreClient,
-    future: Option<Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>>,
+    future: Option<ListResponseFuture>,
 
     _ph: PhantomData<T>,
 }
@@ -167,10 +169,7 @@ where
     }
 
     pub fn list(&self) -> ListResponse<T> {
-        ListResponse::new(
-            self.name.clone(),
-            self.db.clone(),
-        )
+        ListResponse::new(self.name.clone(), self.db.clone())
     }
 
     /// Create the given document in this collection with the given key.

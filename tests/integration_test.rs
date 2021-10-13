@@ -1,12 +1,12 @@
 use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use uuid::Uuid;
 use std::sync::Arc;
 use std::{collections::HashSet, fs::read_to_string};
 use tiny_firestore_odm::{get_client, Collection, CollectionName, NamedDocument};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
+use uuid::Uuid;
 
 const SCOPES: &[&str] = &["https://www.googleapis.com/auth/cloud-platform"];
 
@@ -25,7 +25,7 @@ struct ProjectIdExtractor {
 
 async fn empty_collection<T>(collection: &Collection<T>) -> Result<()>
 where
-    T: Serialize + DeserializeOwned + Unpin + 'static
+    T: Serialize + DeserializeOwned + Unpin + 'static,
 {
     let items: Vec<NamedDocument<T>> = collection.list().collect().await;
 
