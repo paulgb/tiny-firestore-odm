@@ -1,8 +1,10 @@
+use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use uuid::Uuid;
 use std::sync::Arc;
 use std::{collections::HashSet, fs::read_to_string};
-use tiny_firestore_odm::{Collection, CollectionName, NamedDocument, get_client};
+use tiny_firestore_odm::{get_client, Collection, CollectionName, NamedDocument};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -21,15 +23,17 @@ struct ProjectIdExtractor {
     project_id: String,
 }
 
-async fn empty_collection<T>(collection: &Collection<T>)
+async fn empty_collection<T>(collection: &Collection<T>) -> Result<()>
 where
-    T: Serialize + DeserializeOwned + Unpin + 'static,
+    T: Serialize + DeserializeOwned + Unpin + 'static
 {
     let items: Vec<NamedDocument<T>> = collection.list().collect().await;
 
     for item in items {
-        collection.delete(&item.name).await.unwrap();
+        collection.delete(&item.name).await?;
     }
+
+    Ok(())
 }
 
 fn get_source_and_project() -> (TokenSource, String) {
@@ -49,14 +53,14 @@ fn get_source_and_project() -> (TokenSource, String) {
 
 #[tokio::test]
 async fn do_test() {
+    let unique_id = Uuid::new_v4().to_string();
+
     let (source, project_id) = get_source_and_project();
     let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
-    let users: Collection<User> = Collection::new(client, CollectionName::new(&project_id, "users"));
-
-    // Delete existing documents to create fresh start.
-    empty_collection(&users).await;
-
-    println!("h4");
+    let users: Collection<User> = Collection::new(
+        client,
+        CollectionName::new(&project_id, &format!("tmp-{}", unique_id)),
+    );
 
     // Create a pair of users.
     let mut u1 = User {
@@ -104,4 +108,7 @@ async fn do_test() {
     let u1_updated = users.get(&u1_key).await.unwrap();
 
     assert_eq!(u1, u1_updated);
+
+    // Delete existing documents to create fresh start.
+    empty_collection(&users).await.unwrap();
 }
