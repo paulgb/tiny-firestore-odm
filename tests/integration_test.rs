@@ -1,10 +1,8 @@
 use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::sync::Arc;
 use std::{collections::HashSet, fs::read_to_string};
-use tiny_firestore_odm::{get_client, Collection, CollectionName, NamedDocument};
-use tokio::sync::Mutex;
+use tiny_firestore_odm::{Collection, Database, NamedDocument};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
@@ -55,12 +53,9 @@ fn get_source_and_project() -> (TokenSource, String) {
 async fn do_test() {
     let unique_id = Uuid::new_v4().to_string();
 
-    let (source, project_id) = get_source_and_project();
-    let client = Arc::new(Mutex::new(get_client(source).await.unwrap()));
-    let users: Collection<User> = Collection::new(
-        client,
-        CollectionName::new(&project_id, &format!("tmp-{}", unique_id)),
-    );
+    let (token_source, project_id) = get_source_and_project();
+    let db = Database::new(token_source, &project_id).await;
+    let users: Collection<User> = db.collection(&format!("tmp-{}", unique_id));
 
     // Create a pair of users.
     let mut u1 = User {
