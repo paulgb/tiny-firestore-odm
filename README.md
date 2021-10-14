@@ -12,6 +12,8 @@ The intent is not to provide access to all of Firestore's functionality, but to 
 simplified interface centered around using Firestore as a key/value store for arbitrary
 collections of (serializable) Rust objects.
 
+See [Are We Google Cloud Yet?](https://github.com/paulgb/are-we-google-cloud-yet) for a compatible Rust/GCP stack.
+
 ## Usage
 
 ```rust
@@ -19,6 +21,9 @@ use google_authz::Credentials;
 use tiny_firestore_odm::{Collection, Database, NamedDocument};
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
+
+// Define our data model.
+// Any Rust type that implements Serialize and Deserialize can be stored in a Collection.
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct ActorRole {
@@ -36,7 +41,9 @@ struct Movie {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // Use `google-authz` for credential discovery.
     let creds = Credentials::default().await;
+    // Firestore databases are namespaced by project ID, so we need that too.
     let project_id = std::env::var("GCP_PROJECT_ID").expect("Expected GCP_PROJECT_ID env var.");
 
     // A Database is the main wrapper around a raw FirestoreClient.
