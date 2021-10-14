@@ -82,7 +82,7 @@ async fn main() {
     let movie_copy = movies.get(&movie_id).await.unwrap();
     assert_eq!(movie, movie_copy);
 
-    // Alternatively, we can use our own string as the key, like this:
+    // Alternatively, we can supply a string to use as the key, like this:
     movies.try_create(&movie, "The Big Lebowski").await.unwrap();
 
     // Then, we can retrieve it with the same string.
