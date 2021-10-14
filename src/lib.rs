@@ -181,6 +181,7 @@ where
     }
 }
 
+/// Represents a Firestore database.
 pub struct Database {
     client: SharedFirestoreClient,
     project_id: String,
@@ -196,6 +197,7 @@ impl Database {
         Database { client, project_id: project_id.to_string() }
     }
 
+    /// Returns a top-level collection from this database.
     pub fn collection<T>(&self, name: &str) -> Collection<T> where T: Serialize + DeserializeOwned + 'static + Unpin {
         let name = CollectionName::new(&self.project_id, name);
         Collection::new(self.client.clone(), name)
