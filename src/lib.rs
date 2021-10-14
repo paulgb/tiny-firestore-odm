@@ -1,5 +1,5 @@
-pub use client::{get_client, get_client_default};
-pub use dynamic_firestore_client::{SharedFirestoreClient, DynamicFirestoreClient};
+use client::get_client;
+use dynamic_firestore_client::{SharedFirestoreClient};
 use firestore_serde::firestore::{
     precondition::ConditionType, CreateDocumentRequest, DeleteDocumentRequest, GetDocumentRequest,
     Precondition, UpdateDocumentRequest,
@@ -18,8 +18,8 @@ use std::task::Poll;
 use tokio_stream::Stream;
 use tonic::Code;
 
-mod client;
-mod dynamic_firestore_client;
+pub mod client;
+pub mod dynamic_firestore_client;
 mod identifiers;
 
 /// Represents a key/value pair, where the key (name) is a fully-qualified path to the document.

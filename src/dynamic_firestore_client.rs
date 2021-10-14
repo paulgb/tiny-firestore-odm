@@ -17,7 +17,7 @@ pub struct WrappedService {
             Response = http::Response<hyper::Body>,
             Error = tonic::transport::Error,
             Future = ResponseFuture,
-        >,
+        > + Send,
     >,
 }
 
@@ -29,7 +29,7 @@ impl WrappedService {
                 Response = http::Response<hyper::Body>,
                 Error = tonic::transport::Error,
                 Future = ResponseFuture,
-            > + 'static,
+            > + 'static + Send,
     {
         WrappedService {
             service: Box::new(service),
