@@ -2,6 +2,7 @@
 
 [![wokflow state](https://github.com/paulgb/tiny-firestore-odm/workflows/Rust/badge.svg)](https://github.com/paulgb/tiny-firestore-odm/actions/workflows/rust.yml)
 [![crates.io](https://img.shields.io/crates/v/tiny-firestore-odm.svg)](https://crates.io/crates/tiny-firestore-odm)
+[![docs.rs](https://img.shields.io/badge/docs-release-brightgreen)](https://docs.rs/tiny-firestore-odm/)
 
 `tiny-firestore-odm` is a lightweight Object Document Mapper for Firestore. It's built on top of
 [`firestore-serde`](https://github.com/paulgb/firestore-serde) (which does the
