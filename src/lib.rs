@@ -1,5 +1,5 @@
 pub use client::{get_client, get_client_default};
-use dynamic_firestore_client::SharedFirestoreClient;
+pub use dynamic_firestore_client::{SharedFirestoreClient, DynamicFirestoreClient};
 use firestore_serde::firestore::{
     precondition::ConditionType, CreateDocumentRequest, DeleteDocumentRequest, GetDocumentRequest,
     Precondition, UpdateDocumentRequest,
