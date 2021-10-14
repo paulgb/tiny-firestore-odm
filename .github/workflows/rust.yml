@@ -21,10 +21,6 @@ jobs:
     - name: Write credentials
       run: 'echo "${GCP_SERVICE_ACCOUNT}" > ${GOOGLE_APPLICATION_CREDENTIALS}'
       shell: bash
-    - name: Check1
-      run: pwd
-    - name: Check2
-      run: head -c 60 ${GOOGLE_APPLICATION_CREDENTIALS}
     - name: Build
       run: cargo build --verbose
     - name: Run tests
