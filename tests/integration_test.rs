@@ -1,12 +1,10 @@
 use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{collections::HashSet, fs::read_to_string};
+use std::collections::HashSet;
 use tiny_firestore_odm::{Collection, Database, NamedDocument};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
-
-const SCOPES: &[&str] = &["https://www.googleapis.com/auth/cloud-platform"];
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Hash, Clone)]
 struct User {
@@ -14,11 +12,6 @@ struct User {
     pub email: String,
     pub id: u32,
     pub city: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ProjectIdExtractor {
-    project_id: String,
 }
 
 async fn empty_collection<T>(collection: &Collection<T>) -> Result<()>
@@ -34,26 +27,21 @@ where
     Ok(())
 }
 
-fn get_source_and_project() -> (TokenSource, String) {
-    let creds_json = if let Ok(creds) = std::env::var("GCP_SERVICE_ACCOUNT") {
-        creds
-    } else {
-        read_to_string("credentials.json")
-            .expect("No credentials.json and GCP_SERVICE_ACCOUNT not set.")
-    };
+async fn get_source_and_project() -> (TokenSource, String) {
+    let project_id = std::env::var("GCP_PROJECT_ID").expect(
+        "The GCP_PROJECT_ID environment variable should point to a Google Cloud project ID.",
+    );
 
-    let source: TokenSource = Credentials::from_json(creds_json.as_bytes(), SCOPES).into();
-    let project: ProjectIdExtractor =
-        serde_json::from_str(&creds_json).expect("Could not parse credentials file");
+    let source: TokenSource = Credentials::default().await.into();
 
-    (source, project.project_id)
+    (source, project_id)
 }
 
 #[tokio::test]
 async fn do_test() {
     let unique_id = Uuid::new_v4().to_string();
 
-    let (token_source, project_id) = get_source_and_project();
+    let (token_source, project_id) = get_source_and_project().await;
     let db = Database::new(token_source, &project_id).await;
     let users: Collection<User> = db.collection(&format!("tmp-{}", unique_id));
 

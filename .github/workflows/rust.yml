@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GOOGLE_APPLICATION_CREDENTIALS: /tmp/credentials.json
 
@@ -21,6 +20,8 @@ jobs:
     - name: Write credentials
       run: 'echo "${GCP_SERVICE_ACCOUNT}" > ${GOOGLE_APPLICATION_CREDENTIALS}'
       shell: bash
+      env:
+        GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
     - name: Build
       run: cargo build --verbose
     - name: Run tests

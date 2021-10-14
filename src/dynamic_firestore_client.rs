@@ -13,11 +13,11 @@ use tower_service::Service;
 pub struct WrappedService {
     service: Box<
         dyn Service<
-            Request<BoxBody>,
-            Response = http::Response<hyper::Body>,
-            Error = tonic::transport::Error,
-            Future = ResponseFuture,
-        > + Send,
+                Request<BoxBody>,
+                Response = http::Response<hyper::Body>,
+                Error = tonic::transport::Error,
+                Future = ResponseFuture,
+            > + Send,
     >,
 }
 
@@ -29,7 +29,9 @@ impl WrappedService {
                 Response = http::Response<hyper::Body>,
                 Error = tonic::transport::Error,
                 Future = ResponseFuture,
-            > + 'static + Send,
+            >
+            + 'static
+            + Send,
     {
         WrappedService {
             service: Box::new(service),

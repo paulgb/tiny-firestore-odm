@@ -1,5 +1,5 @@
 use client::get_client;
-use dynamic_firestore_client::{SharedFirestoreClient};
+use dynamic_firestore_client::SharedFirestoreClient;
 use firestore_serde::firestore::{
     precondition::ConditionType, CreateDocumentRequest, DeleteDocumentRequest, GetDocumentRequest,
     Precondition, UpdateDocumentRequest,
@@ -8,13 +8,13 @@ use firestore_serde::firestore::{Document, ListDocumentsRequest};
 use google_authz::TokenSource;
 pub use identifiers::{CollectionName, DocumentName, QualifyDocumentName};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::Mutex;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
+use tokio::sync::Mutex;
 use tokio_stream::Stream;
 use tonic::Code;
 
@@ -190,15 +190,24 @@ pub struct Database {
 impl Database {
     pub async fn new(token_source: TokenSource, project_id: &str) -> Self {
         let client = Arc::new(Mutex::new(get_client(token_source).await.unwrap()));
-        Database { client, project_id: project_id.to_string() }
+        Database {
+            client,
+            project_id: project_id.to_string(),
+        }
     }
 
     pub fn new_from_client(client: SharedFirestoreClient, project_id: &str) -> Self {
-        Database { client, project_id: project_id.to_string() }
+        Database {
+            client,
+            project_id: project_id.to_string(),
+        }
     }
 
     /// Returns a top-level collection from this database.
-    pub fn collection<T>(&self, name: &str) -> Collection<T> where T: Serialize + DeserializeOwned + 'static + Unpin {
+    pub fn collection<T>(&self, name: &str) -> Collection<T>
+    where
+        T: Serialize + DeserializeOwned + 'static + Unpin,
+    {
         let name = CollectionName::new(&self.project_id, name);
         Collection::new(self.client.clone(), name)
     }

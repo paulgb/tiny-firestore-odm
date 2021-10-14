@@ -52,7 +52,7 @@ async fn main() {
     let database = Database::new(creds.into(), &project_id).await;
 
     // A Collection is a reference to a Firestore collection, combined with a type.
-    let movies: Collection<Movie> = database.collection("movies");
+    let movies: Collection<Movie> = database.collection("tiny-firestore-odm-example-movies");
 
     // Construct a movie to insert into our collection.
     let movie = Movie {
@@ -128,3 +128,29 @@ It currently does not support functionality outside of that, including:
 
 (I haven't ruled out supporting any of those features, but the goal is crate is not to
 comprehensively support all GCP features, just a small but useful subset.)
+
+## Running tests
+
+The unit tests in this crate can be run without any special setup. To do so, run:
+
+    cargo test --lib
+
+There are also integration tests that test the functionality of interacting with the
+outside world. To use these, you must provide Google Cloud credentials. I recommend
+creating a Google Cloud project specifically for integration tests, since Firestore
+is namespaced by project and it avoids the integration tests writing to a database
+used for other things.
+
+Then, set two environment variables:
+- `GOOGLE_APPLICATION_CREDENTIALS`, containing the absolute path of a `.json` file on
+  disk which contains a service account credentials file. You can download this file
+  for a service account through the Google Cloud Console.
+- `GCP_PROJECT_ID`, containing the name of the project whose Firebase you would like
+  to use. This is usually the same as the `project_id` field of the service account
+  JSON file.
+
+With these set, you can run:
+
+    cargo test
+
+to run all unit and integration tests.
