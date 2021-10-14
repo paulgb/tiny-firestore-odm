@@ -123,6 +123,7 @@ Firestore collections).
 It currently does not support functionality outside of that, including:
 - Querying by anything except key
 - Updating only part of a document
+- Transactions
 - Subscribing to updates
 
 (I haven't ruled out supporting any of those features, but the goal is crate is not to
