@@ -90,6 +90,16 @@ impl CollectionName {
         }
     }
 
+    pub fn subcollection(&self, name: &str, collection: &str) -> CollectionName {
+        let mut parent_path = self.parent_path.clone();
+        parent_path.push((self.collection.clone(), name.to_string()));
+        CollectionName {
+            collection: collection.to_string(),
+            project_id: self.project_id.clone(),
+            parent_path
+        }
+    }
+
     /// Return a representation of the parent of this collection, which may either be a document or the root.
     pub fn parent(&self) -> ParentDocumentOrRoot {
         let mut parent_path = self.parent_path.clone();
@@ -207,6 +217,10 @@ impl DocumentName {
         format!("{}/{}", self.collection.name(), self.name)
     }
 
+    pub fn leaf_name(&self) -> &str {
+        &self.name
+    }
+
     /// Parse a document name from a fully-qualified string.
     pub fn parse(name: &str) -> Result<Self, ParseError> {
         let (collection_name, name) = name.rsplit_once("/").unwrap();
@@ -295,6 +309,18 @@ mod test {
         assert_eq!(
             "projects/my-project/databases/(default)/documents/things/mydoc",
             (&doc).qualify(&collection).unwrap().name()
+        );
+    }
+
+    #[test]
+    fn test_subcollection() {
+        let collection = CollectionName::new("my-project", "things");
+
+        let subcollection = collection.subcollection("thing1", "apps");
+
+        assert_eq!(
+            "projects/my-project/databases/(default)/documents/things/thing1/apps",
+            subcollection.name(),
         );
     }
 

@@ -231,6 +231,18 @@ where
         ListResponse::new(self.name.clone(), self.db.clone())
     }
 
+    pub fn name(&self) -> CollectionName {
+        self.name.clone()
+    }
+
+    pub fn subcollection<S>(&self, name: &str, collection: &str) -> Collection<S> where S: Serialize + DeserializeOwned + Unpin {
+        Collection {
+            db: self.db.clone(),
+            name: self.name.subcollection(name, collection),
+            _ph: PhantomData::default(),
+        }
+    }
+
     /// Create the given document in this collection with the given key.
     /// Returns an error if the key is already in use (if you intend to replace the
     /// document in that case, use `upsert` instead.)

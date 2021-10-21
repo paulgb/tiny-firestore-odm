@@ -2,7 +2,7 @@ use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashSet;
-use tiny_firestore_odm::{Collection, Database, NamedDocument};
+use tiny_firestore_odm::{Collection, CollectionName, Database, NamedDocument};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
@@ -12,6 +12,11 @@ struct User {
     pub email: String,
     pub id: u32,
     pub city: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Hash, Clone)]
+struct Device {
+    pub id: String,
 }
 
 async fn empty_collection<T>(collection: &Collection<T>) -> Result<()>
@@ -43,7 +48,16 @@ async fn do_test() {
 
     let (token_source, project_id) = get_source_and_project().await;
     let db = Database::new(token_source, &project_id).await;
-    let users: Collection<User> = db.collection(&format!("tmp-{}", unique_id));
+    let collection_id = format!("tmp-{}", unique_id);
+    let users: Collection<User> = db.collection(&collection_id);
+
+    assert_eq!(
+        CollectionName::parse(&format!(
+            "projects/{}/databases/(default)/documents/{}",
+            project_id, collection_id
+        )).unwrap(),
+        users.name()
+    );
 
     // Create a pair of users.
     let mut u1 = User {
@@ -91,6 +105,10 @@ async fn do_test() {
     let u1_updated = users.get(&u1_key).await.unwrap();
 
     assert_eq!(u1, u1_updated);
+
+    // Create a subcollection.
+    let devices: Collection<Device> = users.subcollection(u1_key.leaf_name(), "devices");
+    devices.create(&Device {id: "blah".to_string()}).await.unwrap();
 
     // Delete existing documents to create fresh start.
     empty_collection(&users).await.unwrap();
