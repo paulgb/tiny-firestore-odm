@@ -1,7 +1,6 @@
 use anyhow::Result;
 use google_authz::{Credentials, TokenSource};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::collections::HashSet;
 use tiny_firestore_odm::{Collection, CollectionName, Database, NamedDocument};
 use tokio_stream::StreamExt;
 use uuid::Uuid;

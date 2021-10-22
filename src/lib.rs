@@ -112,7 +112,7 @@ where
         }
     }
 
-    pub async fn get_page(self) -> VecDeque<Document> {
+    pub async fn get_page(self) -> Vec<NamedDocument<T>> {
         let (docs, _) = Self::fetch_documents(
             self.collection.parent().name(),
             self.collection.leaf_name(),
@@ -123,7 +123,15 @@ where
         )
         .await;
 
-        docs
+        docs.into_iter().map(|doc| {
+            let name = DocumentName::parse(&doc.name).unwrap();
+            let value = firestore_serde::from_document(doc).expect("Could not convert document.");
+        
+            NamedDocument {
+                name,
+                value
+            }
+        }).collect()
     }
 
     /// Fetch a chunk of documents from the server. The future returned by this function
