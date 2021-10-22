@@ -79,7 +79,7 @@ async fn do_test() {
     let u2_key = users.create(&u2).await.expect("Error creating user.");
 
     // Fetch users and check that results match expectations.
-    let users_list: Vec<NamedDocument<User>> = users.list().collect().await;
+    let users_list: Vec<NamedDocument<User>> = users.list().with_page_size(1).collect().await;
     let users_list: HashSet<NamedDocument<User>> = users_list.into_iter().collect();
 
     let mut expected: HashSet<NamedDocument<User>> = HashSet::new();
@@ -95,6 +95,9 @@ async fn do_test() {
     });
 
     assert_eq!(expected, users_list);
+
+    let users_page = users.list().get_page().await;
+    assert_eq!(2, users_page.len());
 
     // Modify Bob's email
     u1.email = "bob.albert@email".to_string();

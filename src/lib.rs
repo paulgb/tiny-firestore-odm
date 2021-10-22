@@ -69,6 +69,10 @@ where
     /// A handle to the future, held when we are waiting for more data from the server.
     future: Option<ListResponseFuture>,
 
+    page_size: u32,
+
+    order_by: String,
+
     _ph: PhantomData<T>,
 }
 
@@ -88,8 +92,31 @@ where
             db,
             depleated: false,
             future: None,
+            page_size: 0,
+            order_by: "".to_string(),
             _ph: PhantomData::default(),
         }
+    }
+
+    pub fn with_page_size(self, page_size: u32) -> Self {
+        Self {
+            page_size,
+            ..self
+        }
+    }
+
+    pub async fn get_page(self) -> VecDeque<Document> {
+        let (docs, _) = Self::fetch_documents(
+            self.collection.parent().name(),
+            self.collection.leaf_name(),
+            self.page_token.clone(),
+            self.db.clone(),
+            self.page_size,
+            self.order_by,
+        )
+        .await;
+
+        docs
     }
 
     /// Fetch a chunk of documents from the server. The future returned by this function
@@ -99,6 +126,8 @@ where
         collection_id: String,
         page_token: Option<String>,
         db: SharedFirestoreClient,
+        page_size: u32,
+        order_by: String,
     ) -> (VecDeque<Document>, String) {
         let parent = parent;
         let collection_id = collection_id;
@@ -109,6 +138,8 @@ where
                 collection_id,
                 parent,
                 page_token: page_token.unwrap_or_default(),
+                page_size: page_size as i32,
+                order_by,
 
                 ..ListDocumentsRequest::default()
             })
@@ -174,6 +205,8 @@ where
                 self_mut.collection.leaf_name(),
                 self_mut.page_token.clone(),
                 self_mut.db.clone(),
+                self_mut.page_size,
+                self_mut.order_by.to_string(),
             ));
 
             self_mut.future = Some(fut);
@@ -235,7 +268,10 @@ where
         self.name.clone()
     }
 
-    pub fn subcollection<S>(&self, name: &str, collection: &str) -> Collection<S> where S: Serialize + DeserializeOwned + Unpin {
+    pub fn subcollection<S>(&self, name: &str, collection: &str) -> Collection<S>
+    where
+        S: Serialize + DeserializeOwned + Unpin,
+    {
         Collection {
             db: self.db.clone(),
             name: self.name.subcollection(name, collection),
