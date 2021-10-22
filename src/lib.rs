@@ -188,9 +188,9 @@ where
 
                         self_mut.page_token = if page_token.is_empty() {
                             self_mut.depleated = true;
-                            Some(page_token)
-                        } else {
                             None
+                        } else {
+                            Some(page_token)
                         };
                         self_mut.items = items;
                         self_mut.future = None;

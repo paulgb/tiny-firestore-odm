@@ -1,6 +1,6 @@
 [package]
 name = "tiny-firestore-odm"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2018"
 description = "A tiny object-document mapper for Google Firestore, focusing on a key/value object store usage model."
 readme = "README.md"
