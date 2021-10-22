@@ -78,23 +78,36 @@ async fn do_test() {
 
     let u2_key = users.create(&u2).await.expect("Error creating user.");
 
-    // Fetch users and check that results match expectations.
-    let users_list: Vec<NamedDocument<User>> = users.list().with_page_size(1).collect().await;
-    let users_list: HashSet<NamedDocument<User>> = users_list.into_iter().collect();
+    {
+        // Fetch users and check that results match expectations.
+        let mut users_iter = users.list().with_page_size(1).with_order_by("email");
+        
+        assert_eq!(NamedDocument {
+            name: u2_key.clone(),
+            value: u2.clone(),
+        }, users_iter.next().await.unwrap());
+        
+        assert_eq!(NamedDocument {
+            name: u1_key.clone(),
+            value: u1.clone(),
+        }, users_iter.next().await.unwrap());
+    }
 
-    let mut expected: HashSet<NamedDocument<User>> = HashSet::new();
+    {
+        // Try reversing the order.
+        let mut users_iter = users.list().with_order_by("email desc");
 
-    expected.insert(NamedDocument {
-        name: u1_key.clone(),
-        value: u1.clone(),
-    });
+        assert_eq!(NamedDocument {
+            name: u1_key.clone(),
+            value: u1.clone(),
+        }, users_iter.next().await.unwrap());
 
-    expected.insert(NamedDocument {
-        name: u2_key,
-        value: u2,
-    });
+        assert_eq!(NamedDocument {
+            name: u2_key.clone(),
+            value: u2.clone(),
+        }, users_iter.next().await.unwrap());
+    }
 
-    assert_eq!(expected, users_list);
 
     let users_page = users.list().get_page().await;
     assert_eq!(2, users_page.len());

@@ -105,6 +105,13 @@ where
         }
     }
 
+    pub fn with_order_by(self, order_by: &str) -> Self {
+        Self {
+            order_by: order_by.to_string(),
+            ..self
+        }
+    }
+
     pub async fn get_page(self) -> VecDeque<Document> {
         let (docs, _) = Self::fetch_documents(
             self.collection.parent().name(),
