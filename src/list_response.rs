@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use tokio_stream::Stream;
 
-type ListResponseFuture = Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static>>;
+type ListResponseFuture = Pin<Box<dyn Future<Output = (VecDeque<Document>, String)> + 'static + Send>>;
 
 /// Stream of documents returned from a Firestore list query.
 pub struct ListResponse<T>
