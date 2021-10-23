@@ -96,7 +96,7 @@ impl CollectionName {
         CollectionName {
             collection: collection.to_string(),
             project_id: self.project_id.clone(),
-            parent_path
+            parent_path,
         }
     }
 

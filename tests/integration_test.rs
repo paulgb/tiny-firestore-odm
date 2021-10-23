@@ -54,7 +54,8 @@ async fn do_test() {
         CollectionName::parse(&format!(
             "projects/{}/databases/(default)/documents/{}",
             project_id, collection_id
-        )).unwrap(),
+        ))
+        .unwrap(),
         users.name()
     );
 
@@ -80,33 +81,44 @@ async fn do_test() {
     {
         // Fetch users and check that results match expectations.
         let mut users_iter = users.list().with_page_size(1).with_order_by("email");
-        
-        assert_eq!(NamedDocument {
-            name: u2_key.clone(),
-            value: u2.clone(),
-        }, users_iter.next().await.unwrap());
-        
-        assert_eq!(NamedDocument {
-            name: u1_key.clone(),
-            value: u1.clone(),
-        }, users_iter.next().await.unwrap());
+
+        assert_eq!(
+            NamedDocument {
+                name: u2_key.clone(),
+                value: u2.clone(),
+            },
+            users_iter.next().await.unwrap()
+        );
+
+        assert_eq!(
+            NamedDocument {
+                name: u1_key.clone(),
+                value: u1.clone(),
+            },
+            users_iter.next().await.unwrap()
+        );
     }
 
     {
         // Try reversing the order.
         let mut users_iter = users.list().with_order_by("email desc");
 
-        assert_eq!(NamedDocument {
-            name: u1_key.clone(),
-            value: u1.clone(),
-        }, users_iter.next().await.unwrap());
+        assert_eq!(
+            NamedDocument {
+                name: u1_key.clone(),
+                value: u1.clone(),
+            },
+            users_iter.next().await.unwrap()
+        );
 
-        assert_eq!(NamedDocument {
-            name: u2_key.clone(),
-            value: u2.clone(),
-        }, users_iter.next().await.unwrap());
+        assert_eq!(
+            NamedDocument {
+                name: u2_key.clone(),
+                value: u2.clone(),
+            },
+            users_iter.next().await.unwrap()
+        );
     }
-
 
     let users_page = users.list().get_page().await;
     assert_eq!(2, users_page.len());
@@ -123,7 +135,12 @@ async fn do_test() {
 
     // Create a subcollection.
     let devices: Collection<Device> = users.subcollection(u1_key.leaf_name(), "devices");
-    devices.create(&Device {id: "blah".to_string()}).await.unwrap();
+    devices
+        .create(&Device {
+            id: "blah".to_string(),
+        })
+        .await
+        .unwrap();
 
     // Delete existing documents to create fresh start.
     empty_collection(&users).await.unwrap();
